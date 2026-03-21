@@ -3,61 +3,84 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class Charactercontrol: MonoBehaviour
+public class Charactercontrol : MonoBehaviour
 {
     // Компоненты
-    private Animator animator;
-    private BoxCollider2D box2d;
-    private Rigidbody2D rb2d;
-    private SpriteRenderer sprite;
-    private ColorSwap colorSwap;
+    Animator animator;
+    BoxCollider2D box2d;
+    Rigidbody2D rb2d;
+    SpriteRenderer sprite;
+    ColorSwap colorSwap;
 
     // Ввод
-    private float keyHorizontal;
-    private float keyVertical;
-    private bool keyJump;
-    private bool keyShoot;
+    float keyHorizontal;
+    float keyVertical;
+    bool keyJump;
+    bool keyShoot;
 
-    // Состояния (Bools)
-    private bool isGrounded;
-    private bool isClimbing;
-    private bool isJumping;
-    private bool isShooting;
-    private bool isThrowing;
-    private bool isTeleporting;
-    private bool isTakingDamage;
-    private bool isInvincible;
-    private bool isFacingRight = true;
+    // Состояния
+    bool isGrounded;
+    bool isJumping;
+    bool isShooting;
+    bool isTeleporting;
+    bool isTakingDamage;
+    bool isInvincible;
+    bool isFacingRight;
 
-    // Параметры лестницы (Интегрировано из новой версии)
-    [Header("Ladder Settings")]
-    [SerializeField] private float climbSpeed = 0.525f;
-    [SerializeField] private float climbSpriteHeight = 0.36f;
-    private bool isClimbingDown;
-    private bool atLaddersEnd;
-    private bool hasStartedClimbing;
-    private bool startedClimbTransition;
-    private bool finishedClimbTransition;
-    private float transformY;
-    private float transformHY;
-    [HideInInspector] public LadderScript ladder; // Ссылка на текущую лестницу (должна быть в триггере)
-
-    // Параметры передвижения
-    [Header("Movement Settings")]
-    [SerializeField] private float moveSpeed = 1.5f;
-    [SerializeField] private float jumpSpeed = 3.7f;
+    // --- ЛОГИКА ЛЕСТНИЦ (Интегрировано) ---
+    bool isClimbing;
+    bool isClimbingDown;
+    bool atLaddersEnd;
+    bool hasStartedClimbing;
+    bool startedClimbTransition;
+    bool finishedClimbTransition;
+    float transformY;
+    float transformHY;
     
-    private string lastAnimationName;
-    private bool jumpStarted;
-    private bool freezeInput;
+    [Header("Ladder Settings")]
+    [SerializeField] float climbSpeed = 0.525f;
+    [SerializeField] float climbSpriteHeight = 0.36f;
+    [HideInInspector] public LadderScript ladder; // Ссылка на скрипт лестницы
 
-    // Оружие и здоровье
+    // Технические переменные
+    bool hitSideRight;
+    bool freezeInput;
+    bool freezePlayer;
+    bool freezeBullets;
+    float shootTime;
+    bool keyShootRelease;
+    RigidbodyConstraints2D rb2dConstraints;
+
+    // --- СИСТЕМА ОРУЖИЯ (Исправлено) ---
+    public enum PlayerWeapons { Default, MagnetBeam, HyperBomb, ThunderBeam, SuperArm, IceSlasher, RollingCutter, FireStorm };
+    public PlayerWeapons playerWeapon = PlayerWeapons.Default;
+
+    [System.Serializable]
+    public struct PlayerWeaponsStruct // Исправлено: добавление структуры
+    {
+        public PlayerWeapons weaponType;
+        public bool enabled;
+        public int currentEnergy;
+        public int maxEnergy;
+        public int energyCost;
+        public int weaponDamage;
+        public Vector2 weaponVelocity;
+        public AudioClip weaponClip;
+        public GameObject weaponPrefab;
+    }
+
+    public PlayerWeaponsStruct[] playerWeaponStructs; // Исправлено: массив структур
+
+    [Header("Player Stats")]
     public int currentHealth;
     public int maxHealth = 28;
+    [SerializeField] float moveSpeed = 1.5f;
+    [SerializeField] float jumpSpeed = 3.7f;
+    [SerializeField] float teleportSpeed = -10f; // Добавлено для метода Teleport
+    [SerializeField] GameObject explodeEffectPrefab;
 
-    [Header("Audio")]
-    [SerializeField] private AudioClip jumpLandedClip;
-    [SerializeField] private AudioClip takingDamageClip;
+    string lastAnimationName;
+    bool jumpStarted;
 
     void Awake()
     {
@@ -70,35 +93,35 @@ public class Charactercontrol: MonoBehaviour
 
     void Start()
     {
+        isFacingRight = true;
         currentHealth = maxHealth;
-        // Если у тебя есть система выбора оружия, она инициализируется здесь
     }
 
     private void FixedUpdate()
     {
-        // Проверка земли (Ground Check)
-        isGrounded = false;
-        if (!isClimbing)
-        {
-            float raycastDistance = 0.025f;
-            int layerMask = 1 << LayerMask.NameToLayer("Ground") | 1 << LayerMask.NameToLayer("MagnetBeam");
-            Vector3 box_origin = box2d.bounds.center;
-            box_origin.y = box2d.bounds.min.y + (box2d.bounds.extents.y / 4f);
-            Vector3 box_size = box2d.bounds.size;
-            box_size.y = box2d.bounds.size.y / 4f;
-            RaycastHit2D raycastHit = Physics2D.BoxCast(box_origin, box_size, 0f, Vector2.down, raycastDistance, layerMask);
+        if (isClimbing) return;
 
-            if (raycastHit.collider != null && !jumpStarted)
-            {
-                isGrounded = true;
-                if (isJumping) { isJumping = false; }
-            }
+        // Проверка земли
+        isGrounded = false;
+        float raycastDistance = 0.025f;
+        int layerMask = 1 << LayerMask.NameToLayer("Ground");
+        Vector3 box_origin = box2d.bounds.center;
+        box_origin.y = box2d.bounds.min.y + (box2d.bounds.extents.y / 4f);
+        Vector3 box_size = box2d.bounds.size;
+        box_size.y = box2d.bounds.size.y / 4f;
+        RaycastHit2D raycastHit = Physics2D.BoxCast(box_origin, box_size, 0f, Vector2.down, raycastDistance, layerMask);
+
+        if (raycastHit.collider != null && !jumpStarted)
+        {
+            isGrounded = true;
+            if (isJumping) isJumping = false;
         }
     }
 
     void Update()
     {
-        if (isTeleporting || isTakingDamage) return;
+        if (isTeleporting) { HandleTeleportLogic(); return; }
+        if (isTakingDamage || freezePlayer) return;
 
         if (!freezeInput)
         {
@@ -108,98 +131,76 @@ public class Charactercontrol: MonoBehaviour
             keyShoot = Input.GetButtonDown("Fire1");
         }
 
-        HandleMovement();
+        PlayerMovement();
     }
 
-    private void HandleMovement()
+    void PlayerMovement()
     {
         transformY = transform.position.y;
         transformHY = transformY + climbSpriteHeight;
 
         if (isClimbing)
         {
-            HandleClimbingLogic();
+            HandleClimbing();
         }
         else
         {
-            HandleNormalMovement();
+            // Обычное движение
+            rb2d.velocity = new Vector2(moveSpeed * keyHorizontal, rb2d.velocity.y);
+
+            if (keyHorizontal < 0 && isFacingRight) Flip();
+            else if (keyHorizontal > 0 && !isFacingRight) Flip();
+
+            if (isGrounded)
+            {
+                if (keyHorizontal != 0) PlayAnimation(isShooting ? "Player_RunShoot" : "Player_Run");
+                else PlayAnimation(isShooting ? "Player_Shoot" : "Player_Idle");
+
+                if (keyJump) { rb2d.velocity = new Vector2(rb2d.velocity.x, jumpSpeed); StartCoroutine(JumpCo()); }
+            }
+            else
+            {
+                isJumping = true;
+                PlayAnimation(isShooting ? "Player_JumpShoot" : "Player_Jump");
+            }
+
+            // Вход на лестницу
+            if (keyVertical > 0) StartClimbingUp();
+            if (keyVertical < 0) StartClimbingDown();
         }
     }
 
-    private void HandleNormalMovement()
+    // --- МЕТОДЫ ЛЕСТНИЦЫ ---
+    void HandleClimbing()
     {
-        // Обычное движение влево-вправо
-        rb2d.velocity = new Vector2(moveSpeed * keyHorizontal, rb2d.velocity.y);
-
-        if (keyHorizontal < 0 && isFacingRight) Flip();
-        else if (keyHorizontal > 0 && !isFacingRight) Flip();
-
-        // Анимации и прыжок
-        if (isGrounded)
-        {
-            if (keyHorizontal != 0) PlayAnimation(isShooting ? "Player_RunShoot" : "Player_Run");
-            else PlayAnimation(isShooting ? "Player_Shoot" : "Player_Idle");
-
-            if (keyJump) { rb2d.velocity = new Vector2(rb2d.velocity.x, jumpSpeed); StartCoroutine(JumpCo()); }
-        }
-        else
-        {
-            isJumping = true;
-            PlayAnimation(isShooting ? "Player_JumpShoot" : "Player_Jump");
-        }
-
-        // Проверка входа на лестницу
-        if (keyVertical > 0) StartClimbingUp();
-        if (keyVertical < 0) StartClimbingDown();
-    }
-
-    private void HandleClimbingLogic()
-    {
-        // 1. Проверка: достигли верха лестницы?
         if (transformHY > ladder.posTopHandlerY)
         {
             if (!isClimbingDown)
             {
                 if (!startedClimbTransition) { startedClimbTransition = true; StartCoroutine(ClimbTransitionCo(true)); }
-                else if (finishedClimbTransition)
-                {
-                    EndClimbOnTop();
-                }
+                else if (finishedClimbTransition) { EndClimbOnTop(); }
             }
         }
-        // 2. Проверка: достигли низа (земли)?
         else if (transformHY < ladder.posBottomHandlerY)
         {
             ResetClimbing();
         }
         else
         {
-            // 3. Процесс карабканья
-            if (keyJump && keyVertical == 0) // Спрыгнуть с лестницы
-            {
-                ResetClimbing();
-            }
-            else
-            {
-                animator.speed = Mathf.Abs(keyVertical); // Анимация только при движении
-                
-                if (keyVertical != 0)
-                {
-                    transform.position += new Vector3(0, climbSpeed * keyVertical * Time.deltaTime, 0);
-                }
-
-                PlayAnimation(isShooting ? "Player_ClimbShoot" : "Player_Climb");
-            }
+            animator.speed = Mathf.Abs(keyVertical);
+            if (keyVertical != 0) transform.position += new Vector3(0, climbSpeed * keyVertical * Time.deltaTime, 0);
+            PlayAnimation(isShooting ? "Player_ClimbShoot" : "Player_Climb");
+            if (keyJump && keyVertical == 0) ResetClimbing();
         }
     }
-
-    // --- МЕТОДЫ ЛЕСТНИЦЫ ---
 
     public void StartClimbingUp()
     {
         if (ladder != null && ladder.isNearLadder && keyVertical > 0 && transformHY < ladder.posTopHandlerY)
         {
-            SetClimbingState(true);
+            isClimbing = true;
+            rb2d.bodyType = RigidbodyType2D.Kinematic;
+            rb2d.velocity = Vector2.zero;
             transform.position = new Vector3(ladder.posX, transform.position.y + 0.05f, 0);
         }
     }
@@ -208,82 +209,95 @@ public class Charactercontrol: MonoBehaviour
     {
         if (ladder != null && ladder.isNearLadder && keyVertical < 0 && isGrounded && transformHY > ladder.posTopHandlerY)
         {
-            SetClimbingState(true);
+            isClimbing = true;
             isClimbingDown = true;
+            rb2d.bodyType = RigidbodyType2D.Kinematic;
+            rb2d.velocity = Vector2.zero;
             StartCoroutine(ClimbTransitionCo(false));
         }
     }
 
-    private void SetClimbingState(bool active)
-    {
-        isClimbing = active;
-        rb2d.bodyType = active ? RigidbodyType2D.Kinematic : RigidbodyType2D.Dynamic;
-        rb2d.velocity = Vector2.zero;
-        if (!active) animator.speed = 1;
-    }
-
-    private void EndClimbOnTop()
-    {
-        finishedClimbTransition = false;
-        startedClimbTransition = false;
-        isJumping = false;
-        transform.position = new Vector2(ladder.posX, ladder.posPlatformY + 0.01f);
-        ResetClimbing();
-    }
-
     public void ResetClimbing()
     {
-        SetClimbingState(false);
+        isClimbing = false;
         isClimbingDown = false;
-        atLaddersEnd = false;
         startedClimbTransition = false;
         finishedClimbTransition = false;
+        rb2d.bodyType = RigidbodyType2D.Dynamic;
+        animator.speed = 1;
     }
 
-    private IEnumerator ClimbTransitionCo(bool movingUp)
+    void EndClimbOnTop()
+    {
+        ResetClimbing();
+        transform.position = new Vector2(ladder.posX, ladder.posPlatformY + 0.01f);
+    }
+
+    IEnumerator ClimbTransitionCo(bool movingUp)
     {
         freezeInput = true;
         finishedClimbTransition = false;
-        
-        Vector3 targetPos = movingUp ? 
+        Vector3 target = movingUp ? 
             new Vector3(ladder.posX, transformY + ladder.handlerTopOffset, 0) :
             new Vector3(ladder.posX, ladder.posTopHandlerY - climbSpriteHeight, 0);
 
-        while (Vector3.Distance(transform.position, targetPos) > 0.01f)
+        while (Vector3.Distance(transform.position, target) > 0.01f)
         {
-            transform.position = Vector3.MoveTowards(transform.position, targetPos, climbSpeed * Time.deltaTime);
-            animator.speed = 1;
+            transform.position = Vector3.MoveTowards(transform.position, target, climbSpeed * Time.deltaTime);
             PlayAnimation("Player_ClimbTop");
             yield return null;
         }
-
         finishedClimbTransition = true;
         freezeInput = false;
     }
 
-    // --- ВСПОМОГАТЕЛЬНОЕ ---
+    // --- ИСПРАВЛЕННЫЕ МЕТОДЫ (ОШИБКИ) ---
 
-    void Flip()
+    public void FreezePlayer(bool freeze)
     {
-        isFacingRight = !isFacingRight;
-        transform.Rotate(0f, 180f, 0f);
-    }
-
-    private IEnumerator JumpCo()
-    {
-        jumpStarted = true;
-        yield return new WaitForSeconds(0.1f);
-        jumpStarted = false;
-    }
-
-    void PlayAnimation(string animationName)
-    {
-        if (animationName != lastAnimationName)
-        {
-            lastAnimationName = animationName;
-            animator.Play(animationName);
+        freezePlayer = freeze;
+        if (freeze) {
+            rb2d.velocity = Vector2.zero;
+            rb2d.constraints = RigidbodyConstraints2D.FreezeAll;
+        } else {
+            rb2d.constraints = RigidbodyConstraints2D.FreezeRotation;
         }
     }
 
+    public void Teleport(bool start)
+    {
+        if (start) {
+            isTeleporting = true;
+            gameObject.layer = LayerMask.NameToLayer("Teleport");
+            rb2d.velocity = new Vector2(0, teleportSpeed);
+            PlayAnimation("Player_Teleport");
+        } else {
+            isTeleporting = false;
+            gameObject.layer = LayerMask.NameToLayer("Player");
+            rb2d.constraints = RigidbodyConstraints2D.FreezeRotation;
+        }
+    }
+
+    void HandleTeleportLogic()
+    {
+        // Базовая логика остановки при приземлении телепорта может быть тут
+        if (isGrounded) Teleport(false);
+    }
+
+    // --- ВСПОМОГАТЕЛЬНЫЕ ---
+
+    void Flip() { isFacingRight = !isFacingRight; transform.Rotate(0f, 180f, 0f); }
+    
+    void PlayAnimation(string name) {
+        if (name != lastAnimationName) { animator.Play(name); lastAnimationName = name; }
+    }
+
+    IEnumerator JumpCo() { jumpStarted = true; yield return new WaitForSeconds(0.1f); jumpStarted = false; }
+
     public void FreezeInput(bool freeze) => freezeInput = freeze;
+
+    // --- МОБИЛЬНОЕ УПРАВЛЕНИЕ (Из оригинального скрипта) ---
+    public void SimulateMoveLeft() => keyHorizontal = -1.0f;
+    public void SimulateMoveRight() => keyHorizontal = 1.0f;
+    public void SimulateMoveStop() => keyHorizontal = 0f;
 }
