@@ -1,0 +1,24 @@
+{
+    "itemList": [
+        {
+            "itemName": "Меч",
+            "itemID": 1,
+            "amount": 1
+        },
+        {
+            "itemName": "Зелье",
+            "itemID": 2,
+            "amount": 5
+        },
+        {
+            "itemName": "Щит",
+            "itemID": 3,
+            "amount": 1
+        },
+        {
+            "itemName": "Яблоко",
+            "itemID": 4,
+            "amount": 10
+        }
+    ]
+}
