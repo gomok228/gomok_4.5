@@ -1,0 +1,57 @@
+using UnityEngine;
+
+public class BuildSystem : MonoBehaviour
+{
+    public InventoryManager inv; // Перетащи сюда объект с InventoryManager
+    public LayerMask osnova;     // Слой для удаления (ПКМ)
+    public float offsetDistance = 0.5f;
+    public float buildDistance = 20f;
+
+    void Update()
+    {
+        // 1. Выбор блока (как в Minecraft)
+        if (Input.GetKeyDown(KeyCode.Alpha1)) SetSlot(0);
+        if (Input.GetKeyDown(KeyCode.Alpha2)) SetSlot(1);
+        if (Input.GetKeyDown(KeyCode.Alpha3)) SetSlot(2);
+
+        // 2. Строительство (ЛКМ)
+        if (Input.GetMouseButtonDown(0))
+        {
+            if (Physics.Raycast(transform.position, transform.forward, out RaycastHit hit, buildDistance))
+            {
+                GameObject currentPrefab = inv.GetCurrentBlock();
+                if (currentPrefab == null) return;
+
+                GameObject clone = Instantiate(currentPrefab);
+                
+                // Твоя математика сетки
+                Vector3 spawnPosition = hit.point + hit.normal * offsetDistance;
+                spawnPosition.x = Mathf.Round(spawnPosition.x * 4f) / 4f;
+                spawnPosition.y = Mathf.Round(spawnPosition.y * 4f) / 4f;
+                spawnPosition.z = Mathf.Round(spawnPosition.z * 4f) / 4f;
+
+                clone.transform.position = spawnPosition;
+                clone.transform.SetParent(hit.collider.transform);
+                
+                // Важно: даем клону тег или слой, чтобы его можно было удалить
+                clone.layer = LayerMask.NameToLayer("osnova"); 
+            }
+        }
+
+        // 3. Удаление (ПКМ)
+        if (Input.GetMouseButtonDown(1))
+        {
+            if (Physics.Raycast(transform.position, transform.forward, out RaycastHit hit, buildDistance, osnova))
+            {
+                Destroy(hit.collider.gameObject);
+            }
+        }
+    }
+
+    void SetSlot(int i)
+    {
+        inv.selectedSlot = i;
+        inv.SaveSelection();
+        Debug.Log("Выбран слот: " + i);
+    }
+}
