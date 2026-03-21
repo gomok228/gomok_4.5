@@ -1,0 +1,41 @@
+using System.Collections.Generic;
+using UnityEngine;
+using System.IO;
+
+public class InventoryManager : MonoBehaviour
+{
+    public List<GameObject> blockPrefabs = new List<GameObject>(); // Твои Red, Green, Blue кубы
+    public int selectedSlot = 0; // Какой сейчас выбран
+    private string savePath;
+
+    void Awake()
+    {
+        savePath = Path.Combine(Application.persistentDataPath, "inventory_selection.json");
+        LoadSelection();
+    }
+
+    public GameObject GetCurrentBlock()
+    {
+        if (blockPrefabs.Count > 0 && selectedSlot < blockPrefabs.Count)
+            return blockPrefabs[selectedSlot];
+        return null;
+    }
+
+    public void SaveSelection()
+    {
+        string json = JsonUtility.ToJson(new SaveData { slot = selectedSlot });
+        File.WriteAllText(savePath, json);
+    }
+
+    public void LoadSelection()
+    {
+        if (File.Exists(savePath))
+        {
+            string json = File.ReadAllText(savePath);
+            selectedSlot = JsonUtility.FromJson<SaveData>(json).slot;
+        }
+    }
+
+    [System.Serializable]
+    public class SaveData { public int slot; }
+}
