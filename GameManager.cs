@@ -18,16 +18,16 @@ public class GameManager : MonoBehaviour
     [Header("Player Stats")]
     public int playerLives = 3;
     public int playerScore = 0;
+    public int levelPoints = 0;
     public int gamePlayerStartLives = 3;
+    private List<int> bonusScore = new List<int>();
     
     GameObject player;
     CameraFollow cameraFollow;
 
     [Header("Enemy & Item Spawning")]
     public AssetPalette assetPalette; // Обязательно назначь в инспекторе!
-    GameObject[] enemyPrefabs;
     GameObject[] itemPrefabs;
-    int enemyPrefabCount;
 
     [Header("Game State")]
     bool isGameOver;
@@ -36,13 +36,30 @@ public class GameManager : MonoBehaviour
     float gameRestartTime;
     public float gameRestartDelay = 5f;
 
+    public enum ResolutionScales { Scale16x9, Scale4x3 };
+    public ResolutionScales resolutionScale = ResolutionScales.Scale16x9;
+
     public enum GameScenes
     {
         TitleScreen,
         StageSelect,
-        BombManStage, // Твой основной уровень
+        BombManStage, 
         GameOver
     };
+
+    public enum StagesList
+    {
+        BombMan,
+        // Сюда добавишь остальных боссов потом
+    };
+
+    [System.Serializable]
+    public struct StagesStruct
+    {
+        public GameScenes GameScene;
+        public bool Completed;
+    }
+    public StagesStruct[] GameStages;
 
     [System.Serializable]
     public struct WorldViewCoordinates
@@ -66,7 +83,6 @@ public class GameManager : MonoBehaviour
             assetPalette = GetComponent<AssetPalette>();
         }
         
-        // Инициализация при старте
         playerLives = gamePlayerStartLives;
     }
 
@@ -75,9 +91,8 @@ public class GameManager : MonoBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        // Ищем игрока и камеру на новой сцене
         player = GameObject.FindGameObjectWithTag("Player");
-        cameraFollow = Camera.main?.GetComponent<CameraFollow>();
+        if (Camera.main != null) cameraFollow = Camera.main.GetComponent<CameraFollow>();
 
         if (gameScene == GameScenes.BombManStage)
         {
@@ -87,7 +102,6 @@ public class GameManager : MonoBehaviour
 
     private void Update()
     {
-        // Логика состояний
         switch (gameScene)
         {
             case GameScenes.BombManStage:
@@ -98,18 +112,13 @@ public class GameManager : MonoBehaviour
                 break;
         }
 
-        // Переход между сценами
         if (startNextScene)
         {
             startNextScene = false;
             SceneManager.LoadScene(nextSceneName);
         }
 
-        // Пауза (без меню, просто остановка времени)
-        if (Input.GetKeyDown(KeyCode.P))
-        {
-            ToggleSimplePause();
-        }
+        if (Input.GetKeyDown(KeyCode.P)) ToggleSimplePause();
     }
 
     // --- ЛОГИКА BOMB MAN STAGE ---
@@ -117,16 +126,13 @@ public class GameManager : MonoBehaviour
     {
         isGameOver = false;
         canPauseGame = true;
-        
-        // Заморозка игрока в самом начале (как в оригинале при телепортации)
         FreezePlayer(true);
-        Invoke("FinishIntro", 1.5f); // Через 1.5 сек начинаем играть
+        Invoke("FinishIntro", 1.5f);
     }
 
     private void FinishIntro()
     {
         FreezePlayer(false);
-        TeleportPlayer(true);
     }
 
     private void BombManLoop()
@@ -134,8 +140,8 @@ public class GameManager : MonoBehaviour
         if (!isGameOver)
         {
             GetWorldViewCoordinates();
-            RepositionEnemies(); // Логика, чтобы враги не пропадали
-            DestroyStrayBullets(); // Чистим память от пуль за экраном
+            RepositionEnemies(); 
+            DestroyStrayBullets(); 
         }
         else
         {
@@ -148,7 +154,7 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // --- УПРАВЛЕНИЕ МИРОМ (FREEZE/HIDE) ---
+    // --- УПРАВЛЕНИЕ МИРОМ (FREEZE/HIDE/DESTROY) ---
     public void FreezeEverything(bool freeze)
     {
         FreezeEnemies(freeze);
@@ -160,7 +166,6 @@ public class GameManager : MonoBehaviour
         GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
         foreach (GameObject enemy in enemies)
         {
-            // Пытаемся найти компонент контроллера врага
             var controller = enemy.GetComponent<EnemyController>(); 
             if(controller != null) controller.FreezeEnemy(freeze);
         }
@@ -180,12 +185,171 @@ public class GameManager : MonoBehaviour
     {
         if (player != null)
         {
-            var pc = player.GetComponent<Charactercontrol>(); // Твой основной скрипт
+            var pc = player.GetComponent<Charactercontrol>(); 
             if(pc != null) {
                 pc.FreezeInput(freeze);
                 pc.FreezePlayer(freeze);
             }
         }
+    }
+
+    public void DestroyWeapons()
+    {
+        GameObject[] beams = GameObject.FindGameObjectsWithTag("PlatformBeam");
+        foreach (GameObject beam in beams) Destroy(beam);
+
+        GameObject[] bombs = GameObject.FindGameObjectsWithTag("Bomb");
+        foreach (GameObject bomb in bombs) Destroy(bomb);
+
+        GameObject[] bullets = GameObject.FindGameObjectsWithTag("Bullet");
+        foreach (GameObject bullet in bullets) Destroy(bullet);
+
+        GameObject[] explosions = GameObject.FindGameObjectsWithTag("Explosion");
+        foreach (GameObject explosion in explosions) Destroy(explosion);
+    }
+
+    // --- СИСТЕМА ЛУТА И ВЕЩЕЙ (BONUS ITEMS) ---
+    
+    public void SetResolutionScale(ResolutionScales scale)
+    {
+        this.resolutionScale = scale;
+    }
+
+    public void SetWeaponsMenuPalette(WeaponsMenu.MenuPalettes palette)
+    {
+        // Заглушка, чтобы не ругалось, раз у нас нет меню
+    }
+
+    private ItemScript.ItemTypes PickRandomBonusItem()
+    {
+        // Вероятности дропа как в оригинале
+        float[] probabilities = { 12, 53, 15, 15, 2, 2, 1, 12, 16 };
+        float total = probabilities.Sum();
+
+        ItemScript.ItemTypes[] items = {
+            ItemScript.ItemTypes.Nothing,
+            ItemScript.ItemTypes.BonusBall,
+            ItemScript.ItemTypes.WeaponEnergySmall,
+            ItemScript.ItemTypes.LifeEnergySmall,
+            ItemScript.ItemTypes.WeaponEnergyBig,
+            ItemScript.ItemTypes.LifeEnergyBig,
+            ItemScript.ItemTypes.ExtraLife,
+            ItemScript.ItemTypes.Nothing,
+            ItemScript.ItemTypes.BonusBall
+        };
+
+        float randomPoint = UnityEngine.Random.value * total;
+
+        for (int i = 0; i < probabilities.Length; i++)
+        {
+            if (randomPoint < probabilities[i]) return items[i];
+            else randomPoint -= probabilities[i];
+        }
+        return items[probabilities.Length - 1];
+    }
+
+    public GameObject GetBonusItem(ItemScript.ItemTypes itemType)
+    {
+        GameObject bonusItem = null;
+
+        if (itemType == ItemScript.ItemTypes.Random)
+        {
+            itemType = PickRandomBonusItem();
+        }
+
+        switch (resolutionScale)
+        {
+            case ResolutionScales.Scale16x9:
+                itemPrefabs = assetPalette.itemPrefabs_16x9;
+                break;
+            case ResolutionScales.Scale4x3:
+                itemPrefabs = assetPalette.itemPrefabs_4x3;
+                break;
+        }
+
+        if (itemPrefabs == null || itemPrefabs.Length == 0) return null; // Защита от ошибок
+
+        switch (itemType)
+        {
+            case ItemScript.ItemTypes.Nothing:
+                bonusItem = null;
+                break;
+            case ItemScript.ItemTypes.BonusBall:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.BonusBall];
+                break;
+            case ItemScript.ItemTypes.ExtraLife:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.ExtraLife];
+                break;
+            case ItemScript.ItemTypes.LifeEnergyBig:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.LifeEnergyBig];
+                break;
+            case ItemScript.ItemTypes.LifeEnergySmall:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.LifeEnergySmall];
+                break;
+            case ItemScript.ItemTypes.WeaponEnergyBig:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.WeaponEnergyBig];
+                break;
+            case ItemScript.ItemTypes.WeaponEnergySmall:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.WeaponEnergySmall];
+                break;
+            case ItemScript.ItemTypes.MagnetBeam:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.MagnetBeam];
+                break;
+            case ItemScript.ItemTypes.WeaponPart:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.WeaponPart];
+                break;
+            case ItemScript.ItemTypes.Yashichi:
+                bonusItem = itemPrefabs[(int)AssetPalette.ItemList.Yashichi];
+                break;
+        }
+
+        return bonusItem;
+    }
+
+    public void SetBonusItemsColorPalette()
+    {
+        ItemScript[] itemScripts = GameObject.FindObjectsOfType<ItemScript>();
+        foreach (ItemScript itemScript in itemScripts)
+        {
+            itemScript.SetColorPalette();
+        }
+    }
+
+    // --- ОЧКИ И ЗАВЕРШЕНИЕ УРОВНЯ ---
+    
+    public void ResetPointsCollected(bool resetLevelPoints = true, bool resetPlayerScore = true)
+    {
+        bonusScore.Clear();
+        if (resetLevelPoints) levelPoints = 0;
+        if (resetPlayerScore) playerScore = 0;
+    }
+
+    public void SetLevelCompleted(StagesList stage)
+    {
+        // Защита от выхода за пределы массива
+        if (GameStages != null && (int)stage < GameStages.Length)
+        {
+            GameStages[(int)stage].Completed = true;
+        }
+    }
+
+    public void TallyPlayerScore()
+    {
+        // Облегченный подсчет очков без UI Canvas
+        playerScore += levelPoints;
+        foreach (int bonus in bonusScore)
+        {
+            playerScore += bonus;
+        }
+        
+        // Звук завершения подсчета
+        if(SoundManager.Instance != null && assetPalette != null)
+            SoundManager.Instance.Play(assetPalette.pointTallyEndClip);
+    }
+
+    public void AllowGamePause(bool pause)
+    {
+        canPauseGame = pause;
     }
 
     // --- ВРАГИ И РЕСПАВН ---
@@ -194,10 +358,9 @@ public class GameManager : MonoBehaviour
         GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
         foreach (GameObject enemy in enemies)
         {
-            // Если враг упал слишком низко за экран — возвращаем или удаляем
             if (enemy.transform.position.y < worldViewCoords.Bottom - 2f)
             {
-                Destroy(enemy); // В твоем случае проще удалять и ждать нового спавна
+                Destroy(enemy); 
             }
         }
     }
@@ -238,6 +401,8 @@ public class GameManager : MonoBehaviour
 
     private void ToggleSimplePause()
     {
+        if (!canPauseGame) return;
+
         isGamePaused = !isGamePaused;
         Time.timeScale = isGamePaused ? 0 : 1;
         if(SoundManager.Instance != null) {
@@ -254,11 +419,5 @@ public class GameManager : MonoBehaviour
         worldViewCoords.Bottom = wv0.y;
         worldViewCoords.Right = wv1.x;
         worldViewCoords.Top = wv1.y;
-    }
-
-    private void TeleportPlayer(bool teleport)
-    {
-        // Вызываем телепортацию в твоем Charactercontrol, если она там есть
-        // player.GetComponent<Charactercontrol>().Teleport(teleport);
     }
 }
