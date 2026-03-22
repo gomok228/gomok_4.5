@@ -1,0 +1,40 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+// Мини-скрипт для управления поведением самой тени (авто-уничтожение)
+public class DashTrailEffect : MonoBehaviour
+{
+    private SpriteRenderer sr;
+    private Color trailColor;
+    private float fadeSpeed;
+
+    public void Initialize(Sprite sprite, Transform parent, Color color, float speed, bool isFacingRight)
+    {
+        sr = gameObject.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.color = color;
+        sr.sortingOrder = parent.GetComponent<SpriteRenderer>().sortingOrder - 1; // Всегда позади
+        
+        // Поворачиваем тень так же, как и игрока
+        transform.rotation = parent.rotation;
+        
+        trailColor = color;
+        fadeSpeed = speed;
+        transform.position = parent.position;
+    }
+
+    void Update()
+    {
+        // Плавно уменьшаем альфа-канал
+        trailColor.a -= fadeSpeed * Time.deltaTime;
+        sr.color = trailColor;
+
+        // Если тень полностью прозрачная — уничтожаем объект
+        if (trailColor.a <= 0)
+        {
+            Destroy(gameObject);
+        }
+    }
+}
