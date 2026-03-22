@@ -3,22 +3,23 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+
+
 public class Charactercontrol : MonoBehaviour
 {
-    // Компоненты
     Animator animator;
     BoxCollider2D box2d;
     Rigidbody2D rb2d;
     SpriteRenderer sprite;
-    ColorSwap colorSwap;
 
-    // Ввод
+    ColorSwap colorSwap;
+    Collider2D currentPlatform;
+
     float keyHorizontal;
     float keyVertical;
     bool keyJump;
     bool keyShoot;
 
-    // Состояния
     bool isGrounded;
     bool isJumping;
     bool isShooting;
@@ -27,7 +28,7 @@ public class Charactercontrol : MonoBehaviour
     bool isInvincible;
     bool isFacingRight;
 
-    // --- ЛОГИКА ЛЕСТНИЦ (Интегрировано) ---
+    // ЛОГИКА ЛЕСТНИЦЫ
     bool isClimbing;
     bool isClimbingDown;
     bool atLaddersEnd;
@@ -36,51 +37,54 @@ public class Charactercontrol : MonoBehaviour
     bool finishedClimbTransition;
     float transformY;
     float transformHY;
-    
-    [Header("Ladder Settings")]
-    [SerializeField] float climbSpeed = 0.525f;
-    [SerializeField] float climbSpriteHeight = 0.36f;
-    [HideInInspector] public LadderScript ladder; // Ссылка на скрипт лестницы
 
-    // Технические переменные
+    // --- ЛОГИКА DASH (MEGA MAN X STYLE) ---
+    [Header("Dash Settings")]
+    [SerializeField] float dashSpeed = 3.5f;
+    [SerializeField] float dashDuration = 0.5f;
+    bool isDashing;
+    bool isDashJumping; 
+    float dashTimer;
+    Vector2 originalColliderSize;
+    Vector2 originalColliderOffset;
+
+    // --- ДОБАВЛЕНО: НАСТРОЙКИ СЛЕДА (GHOST TRAIL) ---
+    [SerializeField] Color trailColor = new Color(0, 0.5f, 1f, 0.5f); // Голубой, полупрозрачный
+    [SerializeField] float trailFadeSpeed = 3f; // Скорость исчезновения
+    [SerializeField] float trailInterval = 0.08f; // Как часто создавать тени
+    private float trailTimer;
+    private GameObject trailPrefab; // Префаб, который мы создадим сами в Awake
+
     bool hitSideRight;
     bool freezeInput;
     bool freezePlayer;
     bool freezeBullets;
+
     float shootTime;
     bool keyShootRelease;
+    bool jumpStarted;
+
     RigidbodyConstraints2D rb2dConstraints;
 
-    // --- СИСТЕМА ОРУЖИЯ (Исправлено) ---
+    [Header("Audio and Effects")]
+    [SerializeField] AudioClip explodeEffectClip;
+    [SerializeField] GameObject explodeEffectPrefab;
+    [SerializeField] float moveSpeed = 1.5f;
+    [SerializeField] float jumpSpeed = 3.7f;
+    [SerializeField] float climbSpeed = 0.525f;
+    [SerializeField] float climbSpriteHeight = 0.36f;
+    [HideInInspector] public LadderScript ladder;
+
+    private enum SwapIndex
+    {
+        Primary = 64,
+        Secondary = 128
+    }
+
     public enum PlayerWeapons { Default, MagnetBeam, HyperBomb, ThunderBeam, SuperArm, IceSlasher, RollingCutter, FireStorm };
     public PlayerWeapons playerWeapon = PlayerWeapons.Default;
 
-    [System.Serializable]
-    public struct PlayerWeaponsStruct // Исправлено: добавление структуры
-    {
-        public PlayerWeapons weaponType;
-        public bool enabled;
-        public int currentEnergy;
-        public int maxEnergy;
-        public int energyCost;
-        public int weaponDamage;
-        public Vector2 weaponVelocity;
-        public AudioClip weaponClip;
-        public GameObject weaponPrefab;
-    }
-
-    public PlayerWeaponsStruct[] playerWeaponStructs; // Исправлено: массив структур
-
-    [Header("Player Stats")]
-    public int currentHealth;
-    public int maxHealth = 28;
-    [SerializeField] float moveSpeed = 1.5f;
-    [SerializeField] float jumpSpeed = 3.7f;
-    [SerializeField] float teleportSpeed = -10f; // Добавлено для метода Teleport
-    [SerializeField] GameObject explodeEffectPrefab;
-
     string lastAnimationName;
-    bool jumpStarted;
 
     void Awake()
     {
@@ -89,19 +93,25 @@ public class Charactercontrol : MonoBehaviour
         rb2d = GetComponent<Rigidbody2D>();
         sprite = GetComponent<SpriteRenderer>();
         colorSwap = GetComponent<ColorSwap>();
+
+        originalColliderSize = box2d.size;
+        originalColliderOffset = box2d.offset;
+
+        // Автоматически создаем префаб для тени при запуске, чтобы тебе не делать его вручную
+        trailPrefab = new GameObject("DashTrail_Prefab");
+        trailPrefab.AddComponent<DashTrailEffect>();
+        trailPrefab.SetActive(false); // Прячем до поры до времени
     }
 
     void Start()
     {
         isFacingRight = true;
-        currentHealth = maxHealth;
     }
 
     private void FixedUpdate()
     {
         if (isClimbing) return;
 
-        // Проверка земли
         isGrounded = false;
         float raycastDistance = 0.025f;
         int layerMask = 1 << LayerMask.NameToLayer("Ground");
@@ -114,14 +124,17 @@ public class Charactercontrol : MonoBehaviour
         if (raycastHit.collider != null && !jumpStarted)
         {
             isGrounded = true;
-            if (isJumping) isJumping = false;
+            if (isJumping) 
+            { 
+                isJumping = false; 
+                isDashJumping = false; 
+            }
         }
     }
 
     void Update()
     {
-        if (isTeleporting) { HandleTeleportLogic(); return; }
-        if (isTakingDamage || freezePlayer) return;
+        if (isTeleporting || isTakingDamage || freezePlayer) return;
 
         if (!freezeInput)
         {
@@ -132,6 +145,7 @@ public class Charactercontrol : MonoBehaviour
         }
 
         PlayerMovement();
+        Jump(); 
     }
 
     void PlayerMovement()
@@ -142,35 +156,122 @@ public class Charactercontrol : MonoBehaviour
         if (isClimbing)
         {
             HandleClimbing();
+            return;
+        }
+
+        if (isGrounded && keyVertical < 0 && keyJump && !isDashing)
+        {
+            StartDash();
+        }
+
+        if (isDashing)
+        {
+            HandleDashing();
+            return; 
+        }
+
+        float currentHorizontalSpeed = (isDashJumping) ? dashSpeed : moveSpeed;
+        rb2d.linearVelocity = new Vector2(currentHorizontalSpeed * keyHorizontal, rb2d.linearVelocity.y);
+
+        if (keyHorizontal < 0 && isFacingRight) Flip();
+        else if (keyHorizontal > 0 && !isFacingRight) Flip();
+
+        if (isGrounded)
+        {
+            if (keyHorizontal != 0) PlayAnimation(isShooting ? "run_shoot" : "run");
+            else PlayAnimation(isShooting ? "shoot" : "idle");
         }
         else
         {
-            // Обычное движение
-            rb2d.velocity = new Vector2(moveSpeed * keyHorizontal, rb2d.velocity.y);
+            isJumping = true;
+            PlayAnimation(isShooting ? "jump_shoot" : "jump");
+        }
 
-            if (keyHorizontal < 0 && isFacingRight) Flip();
-            else if (keyHorizontal > 0 && !isFacingRight) Flip();
+        if (keyVertical > 0) StartClimbingUp();
+        if (keyVertical < 0) StartClimbingDown();
+    }
 
-            if (isGrounded)
+    // --- ЛОГИКА DASH ---
+    void StartDash()
+    {
+        isDashing = true;
+        dashTimer = dashDuration;
+        
+        // Начинаем таймер следа сразу при старте Dash
+        trailTimer = 0; 
+        
+        box2d.size = new Vector2(originalColliderSize.x, originalColliderSize.y / 1.5f);
+        box2d.offset = new Vector2(originalColliderOffset.x, originalColliderOffset.y - (originalColliderSize.y / 6f));
+        
+        PlayAnimation("dash"); 
+    }
+
+    void HandleDashing()
+    {
+        dashTimer -= Time.deltaTime;
+
+        // --- ЛОГИКА СЛЕДА (DASH TRAIL) ---
+        trailTimer -= Time.deltaTime;
+        if (trailTimer <= 0)
+        {
+            CreateTrailAfterimage(); // Создаем тень
+            trailTimer = trailInterval; // Сбрасываем таймер
+        }
+        // --------------------------------
+
+        float direction = isFacingRight ? 1f : -1f;
+        rb2d.linearVelocity = new Vector2(direction * dashSpeed, rb2d.linearVelocity.y);
+
+        if (keyJump)
+        {
+            isDashJumping = true; 
+            StopDash();
+            rb2d.linearVelocity = new Vector2(rb2d.linearVelocity.x, jumpSpeed);
+            StartCoroutine(JumpCo());
+            return;
+        }
+
+        if ((isFacingRight && keyHorizontal < 0) || (!isFacingRight && keyHorizontal > 0))
+        {
+            StopDash();
+            return;
+        }
+
+        if (dashTimer <= 0 || !isGrounded)
+        {
+            if (!Physics2D.Raycast(transform.position, Vector2.up, originalColliderSize.y, 1 << LayerMask.NameToLayer("Ground")))
             {
-                if (keyHorizontal != 0) PlayAnimation(isShooting ? "Player_RunShoot" : "Player_Run");
-                else PlayAnimation(isShooting ? "Player_Shoot" : "Player_Idle");
-
-                if (keyJump) { rb2d.velocity = new Vector2(rb2d.velocity.x, jumpSpeed); StartCoroutine(JumpCo()); }
+                StopDash();
             }
-            else
-            {
-                isJumping = true;
-                PlayAnimation(isShooting ? "Player_JumpShoot" : "Player_Jump");
-            }
-
-            // Вход на лестницу
-            if (keyVertical > 0) StartClimbingUp();
-            if (keyVertical < 0) StartClimbingDown();
         }
     }
 
-    // --- МЕТОДЫ ЛЕСТНИЦЫ ---
+    // --- ФУНКЦИЯ СОЗДАНИЯ ТЕНИ ---
+    void CreateTrailAfterimage()
+    {
+        // Создаем копию нашего префаба тени
+        GameObject trail = Instantiate(trailPrefab, transform.position, transform.rotation);
+        
+        // Скрипт DashTrailEffect сам настроит SpriteRenderer на основе нашего текущего спрайта
+        trail.GetComponent<DashTrailEffect>().Initialize(
+            sprite.sprite,          // Текущий спрайт игрока
+            transform,              // Ссылка на нас (для sortingOrder)
+            trailColor,             // Цвет из настроек
+            trailFadeSpeed,         // Скорость исчезновения
+            isFacingRight           // Поворот
+        );
+        
+        trail.SetActive(true); // Показываем
+    }
+
+    void StopDash()
+    {
+        isDashing = false;
+        box2d.size = originalColliderSize;
+        box2d.offset = originalColliderOffset;
+    }
+
+    // --- ЛОГИКА ЛЕСТНИЦЫ ---
     void HandleClimbing()
     {
         if (transformHY > ladder.posTopHandlerY)
@@ -189,7 +290,7 @@ public class Charactercontrol : MonoBehaviour
         {
             animator.speed = Mathf.Abs(keyVertical);
             if (keyVertical != 0) transform.position += new Vector3(0, climbSpeed * keyVertical * Time.deltaTime, 0);
-            PlayAnimation(isShooting ? "Player_ClimbShoot" : "Player_Climb");
+            PlayAnimation(isShooting ? "climb_shoot" : "climb");
             if (keyJump && keyVertical == 0) ResetClimbing();
         }
     }
@@ -200,7 +301,7 @@ public class Charactercontrol : MonoBehaviour
         {
             isClimbing = true;
             rb2d.bodyType = RigidbodyType2D.Kinematic;
-            rb2d.velocity = Vector2.zero;
+            rb2d.linearVelocity = Vector2.zero;
             transform.position = new Vector3(ladder.posX, transform.position.y + 0.05f, 0);
         }
     }
@@ -212,7 +313,7 @@ public class Charactercontrol : MonoBehaviour
             isClimbing = true;
             isClimbingDown = true;
             rb2d.bodyType = RigidbodyType2D.Kinematic;
-            rb2d.velocity = Vector2.zero;
+            rb2d.linearVelocity = Vector2.zero;
             StartCoroutine(ClimbTransitionCo(false));
         }
     }
@@ -244,47 +345,29 @@ public class Charactercontrol : MonoBehaviour
         while (Vector3.Distance(transform.position, target) > 0.01f)
         {
             transform.position = Vector3.MoveTowards(transform.position, target, climbSpeed * Time.deltaTime);
-            PlayAnimation("Player_ClimbTop");
+            PlayAnimation("climb_top");
             yield return null;
         }
         finishedClimbTransition = true;
         freezeInput = false;
     }
 
-    // --- ИСПРАВЛЕННЫЕ МЕТОДЫ (ОШИБКИ) ---
-
-    public void FreezePlayer(bool freeze)
+    void Jump()
     {
-        freezePlayer = freeze;
-        if (freeze) {
-            rb2d.velocity = Vector2.zero;
-            rb2d.constraints = RigidbodyConstraints2D.FreezeAll;
-        } else {
-            rb2d.constraints = RigidbodyConstraints2D.FreezeRotation;
+        if (keyJump && isGrounded && !jumpStarted && !isDashing)
+        {
+            rb2d.linearVelocity = new Vector2(rb2d.linearVelocity.x, jumpSpeed);
+            StartCoroutine(JumpCo());
+            PlayAnimation("jump");
         }
     }
 
-    public void Teleport(bool start)
+    private IEnumerator JumpCo()
     {
-        if (start) {
-            isTeleporting = true;
-            gameObject.layer = LayerMask.NameToLayer("Teleport");
-            rb2d.velocity = new Vector2(0, teleportSpeed);
-            PlayAnimation("Player_Teleport");
-        } else {
-            isTeleporting = false;
-            gameObject.layer = LayerMask.NameToLayer("Player");
-            rb2d.constraints = RigidbodyConstraints2D.FreezeRotation;
-        }
+        jumpStarted = true;
+        yield return new WaitForSeconds(0.1f);
+        jumpStarted = false;
     }
-
-    void HandleTeleportLogic()
-    {
-        // Базовая логика остановки при приземлении телепорта может быть тут
-        if (isGrounded) Teleport(false);
-    }
-
-    // --- ВСПОМОГАТЕЛЬНЫЕ ---
 
     void Flip() { isFacingRight = !isFacingRight; transform.Rotate(0f, 180f, 0f); }
     
@@ -292,12 +375,31 @@ public class Charactercontrol : MonoBehaviour
         if (name != lastAnimationName) { animator.Play(name); lastAnimationName = name; }
     }
 
-    IEnumerator JumpCo() { jumpStarted = true; yield return new WaitForSeconds(0.1f); jumpStarted = false; }
-
     public void FreezeInput(bool freeze) => freezeInput = freeze;
+    public void FreezePlayer(bool freeze) { freezePlayer = freeze; rb2d.linearVelocity = Vector2.zero; }
 
-    // --- МОБИЛЬНОЕ УПРАВЛЕНИЕ (Из оригинального скрипта) ---
     public void SimulateMoveLeft() => keyHorizontal = -1.0f;
     public void SimulateMoveRight() => keyHorizontal = 1.0f;
     public void SimulateMoveStop() => keyHorizontal = 0f;
+    public void SimulateJump() => StartCoroutine(MobileJump());
+    public void SimulateShoot() => StartCoroutine(MobileShoot());
+
+    private IEnumerator MobileShoot() { keyShoot = true; yield return new WaitForSeconds(0.01f); keyShoot = false; }
+    private IEnumerator MobileJump() { keyJump = true; yield return new WaitForSeconds(0.01f); keyJump = false; }
+
+    private IEnumerator StartDefeatAnimation(bool explode)
+    {
+        yield return new WaitForSeconds(0.5f);
+        FreezeInput(true);
+        FreezePlayer(true);
+        if (explode)
+        {
+            GameObject explodeEffect = Instantiate(explodeEffectPrefab);
+            explodeEffect.name = explodeEffectPrefab.name;
+            explodeEffect.transform.position = sprite.bounds.center;
+            explodeEffect.GetComponent<ExplosionScript>().SetDestroyDelay(5f);
+        }
+        SoundManager.Instance.Play(explodeEffectClip);
+        Destroy(gameObject);
+    }
 }
