@@ -1,0 +1,66 @@
+    void Awake()
+    {
+        runTimeText = GameObject.Find("RunTime").GetComponent<Text>();
+        screenMessageText = GameObject.Find("ScreenMessage").GetComponent<TextMeshProUGUI>();
+
+        isSwappingTiles = false;
+        isDoorwayMoving = false;
+        isDoorway1Open = false;
+        isDoorway2Open = true;
+
+        // Базовая настройка сетки
+        if (levelGrids.Length > 0 && levelGrids[0] != null)
+        {
+            tileSizeX = levelGrids[0].cellSize.x;
+            tileSizeY = levelGrids[0].cellSize.y;
+        }
+        else
+        {
+            tileSizeX = 0.16f; 
+            tileSizeY = 0.16f;
+        }
+
+        halfTileX = tileSizeX / 2f;
+        halfTileY = tileSizeY / 2f;
+
+        tileScreenSizeWidth = (float)tileScreenXY.x * tileSizeX;
+        tileScreenSizeHeight = (float)tileScreenXY.y * tileSizeY;
+
+        halfScreenWidth = tileScreenSizeWidth / 2f;
+        halfScreenHeight = tileScreenSizeHeight / 2f;
+
+        // --- ОБНОВЛЕННЫЙ СПИСОК (С ДВУМЯ СНАЙПЕРАМИ) ---
+
+        // Статусы врагов и предметов
+        objectActive["KillerBomb"] = false;
+        objectActive["Mambu"] = false;
+        objectActive["SniperJoe1"] = false; // Первый снайпер
+        objectActive["SniperJoe2"] = false; // Второй снайпер
+
+        objectActive["ExtraLife1"] = false;
+        objectActive["LifeEnergyBig1"] = false;
+        objectActive["LifeEnergySmall1"] = false;
+        objectActive["LifeEnergySmall2"] = false;
+        objectActive["WeaponEnergyBig1"] = false;
+
+        // Координаты (твои точные значения + заготовки для снайперов)
+        objectPosition["KillerBomb"] = Vector3.zero;
+        objectPosition["Mambu"] = new Vector3(148.9f, 10.5f, 0f);
+        
+        // Сюда потом впишешь координаты снайперов в Unity
+        objectPosition["SniperJoe1"] = Vector3.zero; 
+        objectPosition["SniperJoe2"] = Vector3.zero; 
+
+        objectPosition["ExtraLife1"] = Vector3.zero;
+        objectPosition["LifeEnergyBig1"] = Vector3.zero;
+        objectPosition["LifeEnergySmall1"] = Vector3.zero;
+        objectPosition["LifeEnergySmall2"] = Vector3.zero;
+        objectPosition["WeaponEnergyBig1"] = Vector3.zero;
+
+        // Координаты Босса
+        Vector3 bossCoords = new Vector3(277.3f, -4.3f, 0f);
+        objectPosition["BombMan"] = bossCoords;
+        objectPosition["WeaponPart"] = bossCoords;
+
+        // --- КОНЕЦ ВСТАВКИ ---
+    }
