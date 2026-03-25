@@ -1,0 +1,469 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class Charactercontrol: MonoBehaviour
+{
+    Animator animator;
+    BoxCollider2D box2d;
+    Rigidbody2D rb2d;
+    SpriteRenderer sprite;
+
+    ColorSwap colorSwap;
+
+    float keyHorizontal;
+    float keyVertical;
+    bool keyJump;
+    bool keyShoot;
+
+    bool isGrounded;
+    bool isClimbing;
+    bool isJumping;
+    bool isShooting;
+    bool isThrowing;
+    bool isTeleporting;
+    bool isTakingDamage;
+    bool isInvincible;
+    bool isFacingRight;
+
+    bool hitSideRight;
+
+    bool freezeInput;
+    bool freezePlayer;
+    bool freezeEverything;
+
+    float shootTime;
+    float shootTimeLength;
+    bool keyShootRelease;
+    float keyShootReleaseTimeLength;
+
+    bool canUseWeapon;
+
+    // last animation played
+    string lastAnimationName;
+
+    // delay for ground check
+    bool jumpStarted;
+
+    // freeze/hide player on screen
+    float playerColor;
+    RigidbodyConstraints2D rb2dConstraints;
+
+    // ladder climbing variables
+    float transformY;
+    float transformHY;
+    bool isClimbingDown;
+    bool atLaddersEnd;
+    bool hasStartedClimbing;
+    bool startedClimbTransition;
+    bool finishedClimbTransition;
+
+    private enum SwapIndex
+    {
+        Primary = 64,
+        Secondary = 128
+    }
+
+    public enum WeaponTypes
+    {
+        HyperBomb,
+        ThunderBeam,
+        SuperArm,
+        IceSlasher,
+        RollingCutter,
+        FireStorm,
+        MagnetBeam,
+        MegaBuster
+    };
+    public WeaponTypes playerWeapon = WeaponTypes.MegaBuster;
+
+    [System.Serializable]
+    public struct WeaponsStruct
+    {
+        public WeaponTypes weaponType;
+        public bool enabled;
+        public int currentEnergy;
+        public int maxEnergy;
+        public int energyCost;
+        public int weaponDamage;
+        public Vector2 weaponVelocity;
+        public AudioClip weaponClip;
+        public GameObject weaponPrefab;
+    }
+    public WeaponsStruct[] weaponsData;
+
+    public int currentHealth;
+    public int maxHealth = 28;
+
+    [HideInInspector] public LadderScript ladder;
+
+    [SerializeField] float moveSpeed = 1.25f;
+    [SerializeField] float jumpSpeed = 3.75f;
+    [SerializeField] float climbSpeed = 0.525f;
+
+    [Header("Audio Clips")]
+    [SerializeField] AudioClip teleportClip;
+    [SerializeField] AudioClip jumpLandedClip;
+    [SerializeField] AudioClip takingDamageClip;
+    [SerializeField] AudioClip explodeEffectClip;
+    [SerializeField] AudioClip energyFillClip;
+
+    [Header("Positions and Prefabs")]
+    [SerializeField] Transform bulletShootPos;
+    [SerializeField] GameObject explodeEffectPrefab;
+
+    [Header("Ladder Settings")]
+    [SerializeField] float climbSpriteHeight = 0.36f;
+    [SerializeField] public float handlerTopOffset = 0.05f;
+
+    [Header("Teleport Settings")]
+    [SerializeField] float teleportSpeed = -10f;
+    [SerializeField] float teleportLandingY = 0f;
+    public enum TeleportState { Descending, Landed, Idle };
+    [SerializeField] TeleportState teleportState;
+
+    void Awake()
+    {
+        animator = GetComponent<Animator>();
+        box2d = GetComponent<BoxCollider2D>();
+        rb2d = GetComponent<Rigidbody2D>();
+        sprite = GetComponent<SpriteRenderer>();
+    }
+
+    void Start()
+    {
+        isFacingRight = true;
+        currentHealth = maxHealth;
+        colorSwap = GetComponent<ColorSwap>();
+        SetWeapon(playerWeapon);
+    }
+
+    private void FixedUpdate()
+    {
+        isGrounded = false;
+        int layerMask = 1 << LayerMask.NameToLayer("Ground") | 1 << LayerMask.NameToLayer("MagnetBeam");
+        Vector3 box_origin = box2d.bounds.center;
+        box_origin.y = box2d.bounds.min.y + (box2d.bounds.extents.y / 4f);
+        Vector3 box_size = box2d.bounds.size;
+        box_size.y = box2d.bounds.size.y / 4f;
+        RaycastHit2D raycastHit = Physics2D.BoxCast(box_origin, box_size, 0f, Vector2.down, 0.025f, layerMask);
+        
+        if (raycastHit.collider != null && gameObject.layer != LayerMask.NameToLayer("Teleport") && !jumpStarted)
+        {
+            isGrounded = true;
+            if (isJumping)
+            {
+                isJumping = false;
+                SoundManager.Instance.Play(jumpLandedClip);
+            }
+        }
+    }
+
+    void Update()
+    {
+        if (isTeleporting)
+        {
+            UpdateTeleport();
+            return;
+        }
+
+        if (isTakingDamage)
+        {
+            PlayAnimation("Player_Hit");
+            return;
+        }
+
+        if (!GameManager.Instance.IsGamePaused() && !GameManager.Instance.InCameraTransition())
+        {
+            PlayerDirectionInput();
+            PlayerJumpInput();
+            PlayerShootInput();
+        }
+
+        PlayerMovement();
+        FireWeapon();
+    }
+
+    void PlayerDirectionInput()
+    {
+        if (!freezeInput)
+        {
+            keyHorizontal = Input.GetAxisRaw("Horizontal");
+            keyVertical = Input.GetAxisRaw("Vertical");
+        }
+    }
+
+    void PlayerJumpInput()
+    {
+        if (!freezeInput && Input.GetKeyDown(KeyCode.Space)) keyJump = true;
+        else if (freezeInput || !Input.GetKeyDown(KeyCode.Space)) keyJump = false;
+    }
+
+    void PlayerShootInput()
+    {
+        if (!freezeInput) keyShoot = Input.GetKey(KeyCode.C);
+    }
+
+    void PlayerMovement()
+    {
+        transformY = transform.position.y;
+        transformHY = transformY + climbSpriteHeight;
+        float speed = moveSpeed;
+
+        if (isClimbing)
+        {
+            HandleClimbingLogic();
+        }
+        else
+        {
+            // Обычное движение на земле/в воздухе
+            if (keyHorizontal < 0)
+            {
+                if (isFacingRight) Flip();
+                if (isGrounded)
+                {
+                    if (isShooting) PlayAnimation("Player_RunShoot");
+                    else if (isThrowing) { speed = 0f; PlayAnimation("Player_Throw"); }
+                    else PlayAnimation("Player_Run");
+                }
+            }
+            else if (keyHorizontal > 0)
+            {
+                if (!isFacingRight) Flip();
+                if (isGrounded)
+                {
+                    if (isShooting) PlayAnimation("Player_RunShoot");
+                    else if (isThrowing) { speed = 0f; PlayAnimation("Player_Throw"); }
+                    else PlayAnimation("Player_Run");
+                }
+            }
+            else
+            {
+                if (isGrounded)
+                {
+                    if (isShooting) PlayAnimation("Player_Shoot");
+                    else if (isThrowing) PlayAnimation("Player_Throw");
+                    else PlayAnimation("Player_Idle");
+                }
+            }
+
+            rb2d.velocity = new Vector2(speed * keyHorizontal, rb2d.velocity.y);
+            Jump();
+
+            if (!isGrounded)
+            {
+                isJumping = true;
+                if (isShooting) PlayAnimation("Player_JumpShoot");
+                else if (isThrowing) PlayAnimation("Player_JumpThrow");
+                else PlayAnimation("Player_Jump");
+            }
+
+            StartClimbingUp();
+            StartClimbingDown();
+        }
+    }
+
+    void HandleClimbingLogic()
+    {
+        if (transformHY > ladder.posTopHandlerY)
+        {
+            if (!isClimbingDown)
+            {
+                if (!startedClimbTransition)
+                {
+                    startedClimbTransition = true;
+                    ClimbTransition(true);
+                }
+                else if (finishedClimbTransition)
+                {
+                    finishedClimbTransition = false;
+                    isJumping = false;
+                    PlayAnimation("Player_Idle");
+                    transform.position = new Vector2(ladder.posX, ladder.posPlatformY + 0.005f);
+                    if (!atLaddersEnd) { atLaddersEnd = true; Invoke("ResetClimbing", 0.1f); }
+                }
+            }
+        }
+        else if (transformHY < ladder.posBottomHandlerY)
+        {
+            ResetClimbing();
+        }
+        else
+        {
+            if (!isClimbingDown)
+            {
+                if (keyJump && keyVertical == 0) ResetClimbing();
+                else if (isGrounded && !hasStartedClimbing)
+                {
+                    isJumping = false;
+                    PlayAnimation("Player_Idle");
+                    transform.position = new Vector2(ladder.posX, ladder.posBottomY - 0.005f);
+                    if (!atLaddersEnd) { atLaddersEnd = true; Invoke("ResetClimbing", 0.1f); }
+                }
+                else
+                {
+                    // ФИЗИКА ДВИЖЕНИЯ
+                    if (keyVertical != 0 && !isShooting && !isThrowing && !GameManager.Instance.InCameraTransition())
+                    {
+                        Vector3 climbDirection = new Vector3(0, climbSpeed) * keyVertical;
+                        transform.position = transform.position + climbDirection * Time.deltaTime;
+                    }
+
+                    // АНИМАЦИИ (вынесено в метод)
+                    HandleClimbingAnimations();
+                }
+            }
+        }
+    }
+
+    // МЕТОД ДЛЯ АНИМАЦИЙ ЛЕСТНИЦЫ (С твоими названиями)
+    private void HandleClimbingAnimations()
+    {
+        if (isShooting || isThrowing)
+        {
+            // Поворот если стреляем в бок на лестнице
+            if (keyHorizontal < 0 && isFacingRight) Flip();
+            else if (keyHorizontal > 0 && !isFacingRight) Flip();
+
+            if (isShooting) PlayAnimation("Player_ClimbShoot");
+            else if (isThrowing) PlayAnimation("Player_ClimbThrow");
+        }
+        else
+        {
+            PlayAnimation("Player_Climb");
+        }
+
+        // Замирание анимации если не жмем кнопки
+        if (!GameManager.Instance.InCameraTransition())
+        {
+            animator.speed = (keyVertical != 0 || startedClimbTransition) ? 1 : 0;
+        }
+    }
+
+    void Jump()
+    {
+        if (keyJump && isGrounded && !jumpStarted)
+        {
+            rb2d.velocity = new Vector2(rb2d.velocity.x, jumpSpeed);
+            StartCoroutine(JumpCo());
+        }
+    }
+
+    private IEnumerator JumpCo()
+    {
+        jumpStarted = true;
+        yield return new WaitForSeconds(Time.fixedDeltaTime);
+        jumpStarted = false;
+    }
+
+    void Flip()
+    {
+        isFacingRight = !isFacingRight;
+        transform.Rotate(0f, 180f, 0f);
+    }
+
+    void PlayAnimation(string animationName)
+    {
+        if (animationName != lastAnimationName)
+        {
+            lastAnimationName = animationName;
+            animator.Play(animationName);
+        }
+    }
+
+    // Вспомогательные методы
+    public void StartClimbingUp()
+    {
+        if (ladder != null && ladder.isNearLadder && keyVertical > 0 && transformHY < ladder.posTopHandlerY)
+        {
+            isClimbing = true; isClimbingDown = false;
+            rb2d.bodyType = RigidbodyType2D.Kinematic; rb2d.velocity = Vector2.zero;
+            transform.position = new Vector3(ladder.posX, transformY + 0.025f, 0);
+            StartCoroutine(StartedClimbingCo());
+        }
+    }
+
+    public void StartClimbingDown()
+    {
+        if (ladder != null && ladder.isNearLadder && keyVertical < 0 && isGrounded && transformHY > ladder.posTopHandlerY)
+        {
+            isClimbing = true; isClimbingDown = true;
+            rb2d.bodyType = RigidbodyType2D.Kinematic; rb2d.velocity = Vector2.zero;
+            transform.position = new Vector3(ladder.posX, transformY, 0);
+            ClimbTransition(false);
+        }
+    }
+
+    private IEnumerator StartedClimbingCo() { hasStartedClimbing = true; yield return new WaitForSeconds(0.1f); hasStartedClimbing = false; }
+
+    public void ResetClimbing()
+    {
+        if (isClimbing)
+        {
+            isClimbing = false; atLaddersEnd = false; startedClimbTransition = false; finishedClimbTransition = false;
+            animator.speed = 1; rb2d.bodyType = RigidbodyType2D.Dynamic; rb2d.velocity = Vector2.zero;
+        }
+    }
+
+    void ClimbTransition(bool movingUp) { StartCoroutine(ClimbTransitionCo(movingUp)); }
+
+    private IEnumerator ClimbTransitionCo(bool movingUp)
+    {
+        FreezeInput(true); finishedClimbTransition = false;
+        Vector3 targetPos = movingUp ? new Vector3(ladder.posX, transformY + handlerTopOffset, 0) : new Vector3(ladder.posX, ladder.posTopHandlerY - climbSpriteHeight, 0);
+        
+        while (transform.position != targetPos)
+        {
+            transform.position = Vector3.MoveTowards(transform.position, targetPos, climbSpeed * Time.deltaTime);
+            animator.speed = 1; PlayAnimation("Player_ClimbTop");
+            yield return null;
+        }
+        isClimbingDown = false; finishedClimbTransition = true; FreezeInput(false);
+    }
+
+    void UpdateTeleport()
+    {
+        switch (teleportState)
+        {
+            case TeleportState.Descending:
+                if (transform.position.y <= teleportLandingY)
+                {
+                    rb2d.velocity = Vector2.zero;
+                    transform.position = new Vector3(transform.position.x, teleportLandingY, 0);
+                    teleportState = TeleportState.Landed;
+                }
+                break;
+            case TeleportState.Landed:
+                animator.speed = 1;
+                break;
+        }
+    }
+
+    public void SetWeapon(WeaponTypes weapon)
+    {
+        playerWeapon = weapon;
+        // Здесь твоя логика смены цветов MegaBuster/HyperBomb
+    }
+
+    void FireWeapon()
+    {
+        if (playerWeapon == WeaponTypes.MegaBuster) MegaBuster();
+        // Другие типы оружия...
+    }
+
+    void MegaBuster()
+    {
+        if (keyShoot && keyShootRelease)
+        {
+            isShooting = true; keyShootRelease = false; shootTime = Time.time;
+            Invoke("ShootBullet", 0.1f);
+        }
+        if (!keyShoot && !keyShootRelease) { keyShootRelease = true; }
+        if (isShooting && Time.time - shootTime >= 0.25f) isShooting = false;
+    }
+
+    void ShootBullet() { /* Логика спавна пули */ }
+
+    public void FreezeInput(bool freeze) { freezeInput = freeze; if (freeze) { keyHorizontal = 0; keyVertical = 0; keyJump = false; } }
+}
