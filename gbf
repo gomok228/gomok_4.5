@@ -1,0 +1,421 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.Tilemaps;
+
+public class BombManStage : MonoBehaviour
+{
+    // create an animated storyline
+    float startTime;
+    float runTime;
+
+    // flag that we called for the next scene
+    bool calledNextScene;
+
+    // canvas stuff
+    Text runTimeText;
+    TextMeshProUGUI screenMessageText;
+
+    // size information
+    float tileSizeX;
+    float tileSizeY;
+    float halfTileX;
+    float halfTileY;
+    float tileScreenSizeWidth;
+    float tileScreenSizeHeight;
+    float halfScreenWidth;
+    float halfScreenHeight;
+
+    // track doors and tiles animation
+    bool isSwappingTiles;
+    bool isDoorwayMoving;
+    bool isDoorway1Open;
+    bool isDoorway2Open;
+
+    // player info
+    GameObject player;
+    Vector3 playerPosition;
+
+    // need access to the boss
+    GameObject bombMan;
+
+    // world view coords
+    GameManager.WorldViewCoordinates worldView;
+
+    // objects position (Только для босса и награды)
+    IDictionary<string, Vector3> objectPosition = new Dictionary<string, Vector3>();
+
+    [Header("Scene Settings")]
+    public Vector2Int tileScreenXY = new Vector2Int(16, 15);
+    [SerializeField] bool showRunTime;
+
+    public enum LevelStates { LevelPlay, BossFightIntro, BossFight, PlayerVictory, NextScene };
+    public LevelStates levelState = LevelStates.LevelPlay;
+
+    [Header("Audio Clips")]
+    public AudioClip doorClip;
+    public AudioClip musicClip;
+    public AudioClip bossFightClip;
+    public AudioClip victoryThemeClip;
+
+    [Header("TileMap & Grid Objects")]
+    public Grid[] levelGrids;
+    public Tilemap tmBackground;
+    public Tilemap tmForeground;
+
+    public TileBase[] bgTile1;
+    public TileBase[] bgTile2;
+
+    [Header("Boss Door Objects")]
+    public GameObject bossDoor1;
+    public GameObject bossDoor2;
+
+    [Header("Boss Objects")]
+    public GameObject prefabBombMan;
+    public GameObject prefabWeaponPart;
+
+    [Header("Camera Transitions")]
+    public GameObject[] camTransitions;
+
+    void Awake()
+    {
+        isSwappingTiles = false;
+        isDoorwayMoving = false;
+        isDoorway1Open = false;
+        isDoorway2Open = true;
+
+        // Базовая настройка сетки
+        if (levelGrids.Length > 0 && levelGrids[0] != null)
+        {
+            tileSizeX = levelGrids[0].cellSize.x;
+            tileSizeY = levelGrids[0].cellSize.y;
+        }
+        else
+        {
+            tileSizeX = 0.16f;
+            tileSizeY = 0.16f;
+        }
+
+        halfTileX = tileSizeX / 2f;
+        halfTileY = tileSizeY / 2f;
+
+        tileScreenSizeWidth = (float)tileScreenXY.x * tileSizeX;
+        tileScreenSizeHeight = (float)tileScreenXY.y * tileSizeY;
+
+        halfScreenWidth = tileScreenSizeWidth / 2f;
+        halfScreenHeight = tileScreenSizeHeight / 2f;
+
+        // Координаты Босса (оставлены как было)
+        Vector3 bossCoords = new Vector3(278.200012f, -4f, 0f);
+        objectPosition["BombMan"] = bossCoords;
+        objectPosition["WeaponPart"] = bossCoords;
+    }
+
+    void Start()
+    {
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.SetResolutionScale(GameManager.ResolutionScales.Scale4x3);
+        }
+
+        player = GameObject.FindGameObjectWithTag("Player");
+
+        if (SoundManager.Instance != null)
+        {
+            SoundManager.Instance.MusicSource.volume = 1.0f;
+            SoundManager.Instance.PlayMusic(musicClip);
+        }
+    }
+
+    void Update()
+    {
+        if (runTimeText != null)
+            runTimeText.text = showRunTime ? String.Format("RunTime: {0:0.00}", runTime) : "";
+
+        switch (levelState)
+        {
+            case LevelStates.LevelPlay:
+                if (player != null) playerPosition = player.transform.position;
+                
+                // Очищаем только пули и взрывы, вышедшие за экран (врагов не трогаем)
+                RemoveProjectiles();
+
+                if (SoundManager.Instance != null && SoundManager.Instance.MusicSource.time >= 37.361f)
+                    SoundManager.Instance.MusicSource.time = 7.545f;
+                break;
+
+            case LevelStates.BossFightIntro:
+                runTime = Time.time - startTime;
+
+                if (UtilityFunctions.InTime(runTime, 0.001f))
+                {
+                    GameManager.Instance.AllowGamePause(false);
+                    SoundManager.Instance.StopMusic();
+                    SoundManager.Instance.PlayMusic(bossFightClip);
+                    SwapTilesAnimation();
+
+                    UIEnergyBars.Instance.SetValue(UIEnergyBars.EnergyBars.EnemyHealth, 0);
+                    UIEnergyBars.Instance.SetImage(UIEnergyBars.EnergyBars.EnemyHealth, UIEnergyBars.EnergyBarTypes.BombMan);
+                    UIEnergyBars.Instance.SetVisibility(UIEnergyBars.EnergyBars.EnemyHealth, true);
+
+                    if (player != null)
+                    {
+                        var charCtrl = player.GetComponent<Charactercontrol>();
+                        if (charCtrl != null) charCtrl.FreezeInput(true);
+                    }
+                }
+
+                if (UtilityFunctions.InTime(runTime, 3.0f)) ToggleDoorway2();
+                if (UtilityFunctions.InTime(runTime, 4.0f)) InstantiateBombMan("BombMan", objectPosition["BombMan"]);
+
+                if (UtilityFunctions.InTime(runTime, 4.5f) && bombMan != null)
+                {
+                    var bmc = bombMan.GetComponent<BombManController>();
+                    if (bmc != null) bmc.Pose();
+                    StartCoroutine(FillEnemyHealthBar());
+                }
+
+                if (UtilityFunctions.InTime(runTime, 5.75f))
+                {
+                    if (bombMan != null) bombMan.GetComponent<BombManController>().EnableAI(true);
+                    if (player != null) player.GetComponent<Charactercontrol>().FreezeInput(false);
+                    GameManager.Instance.AllowGamePause(true);
+                    levelState = LevelStates.BossFight;
+                }
+                break;
+
+            case LevelStates.BossFight:
+                if (SoundManager.Instance != null && SoundManager.Instance.MusicSource.time >= 15.974f)
+                    SoundManager.Instance.MusicSource.time = 3.192f;
+                break;
+
+            case LevelStates.PlayerVictory:
+                runTime = Time.time - startTime;
+                if (UtilityFunctions.InTime(runTime, 7.0f)) GameManager.Instance.TallyPlayerScore();
+                if (UtilityFunctions.InTime(runTime, 15.0f))
+                {
+                    GameManager.Instance.ResetPointsCollected(true, false);
+                    GameManager.Instance.SetLevelCompleted(GameManager.StagesList.BombMan);
+                    levelState = LevelStates.NextScene;
+                }
+                break;
+
+            case LevelStates.NextScene:
+                if (!calledNextScene)
+                {
+                    GameManager.Instance.StartNextScene(GameManager.GameScenes.StageSelect);
+                    calledNextScene = true;
+                }
+                break;
+        }
+    }
+
+    public void ToggleDoorway1(bool playAudio = true)
+    {
+        if (!isDoorwayMoving && bossDoor1 != null)
+        {
+            StartCoroutine(ToggleDoorwayGameObject(bossDoor1, 1));
+            if (playAudio) SoundManager.Instance.Play(doorClip);
+        }
+    }
+
+    public void ToggleDoorway2(bool playAudio = true)
+    {
+        if (!isDoorwayMoving && bossDoor2 != null)
+        {
+            StartCoroutine(ToggleDoorwayGameObject(bossDoor2, 2));
+            if (playAudio) SoundManager.Instance.Play(doorClip);
+        }
+    }
+
+    private IEnumerator ToggleDoorwayGameObject(GameObject door, int doorID)
+    {
+        isDoorwayMoving = true;
+        yield return new WaitForSeconds(0.6f);
+
+        if (doorID == 1)
+        {
+            isDoorway1Open = !isDoorway1Open;
+            door.SetActive(!isDoorway1Open);
+        }
+        else if (doorID == 2)
+        {
+            isDoorway2Open = !isDoorway2Open;
+            door.SetActive(!isDoorway2Open);
+        }
+
+        isDoorwayMoving = false;
+    }
+
+    public void SwapTilesAnimation()
+    {
+        if (!isSwappingTiles) StartCoroutine(SwapTilesAnimationCo());
+    }
+
+    private IEnumerator SwapTilesAnimationCo()
+    {
+        isSwappingTiles = true;
+        for (int i = 0; i < 5; i++)
+        {
+            if (tmBackground != null && bgTile1.Length > 0 && bgTile2.Length > 0)
+            {
+                tmBackground.SwapTile(bgTile1[0], bgTile2[0]);
+                tmBackground.SwapTile(bgTile1[1], bgTile2[1]);
+                yield return new WaitForSeconds(0.15f);
+                tmBackground.SwapTile(bgTile2[0], bgTile1[0]);
+                tmBackground.SwapTile(bgTile2[1], bgTile1[1]);
+                yield return new WaitForSeconds(0.15f);
+            }
+        }
+        isSwappingTiles = false;
+    }
+
+    private IEnumerator FillEnemyHealthBar()
+    {
+        var ec = bombMan.GetComponent<EnemyController>();
+        int maxHealth = ec.maxHealth;
+        SoundManager.Instance.Play(ec.energyFillClip, true);
+        for (int i = 1; i <= maxHealth; i++)
+        {
+            float bars = (float)i / (float)maxHealth;
+            UIEnergyBars.Instance.SetValue(UIEnergyBars.EnergyBars.EnemyHealth, bars);
+            yield return new WaitForSeconds(0.025f);
+        }
+        SoundManager.Instance.Stop();
+    }
+
+    public void BossDefeated()
+    {
+        SoundManager.Instance.StopMusic();
+        UIEnergyBars.Instance.SetVisibility(UIEnergyBars.EnergyBars.EnemyHealth, false);
+        GameManager.Instance.DestroyWeapons();
+        if (player != null) player.GetComponent<Charactercontrol>().Invincible(true);
+        InstantiateWeaponPart("WeaponPart", objectPosition["WeaponPart"], ItemScript.WeaponPartColors.Orange);
+    }
+
+    private void WeaponPartCollected()
+    {
+        startTime = Time.time;
+        SoundManager.Instance.MusicSource.volume = 1f;
+        SoundManager.Instance.PlayMusic(victoryThemeClip, false);
+        GameManager.Instance.FreezePlayer(true);
+        GameManager.Instance.AllowGamePause(false);
+        levelState = LevelStates.PlayerVictory;
+    }
+
+    bool OutOfCameraView(Vector3 point)
+    {
+        return (point.x < worldView.Left || point.x > worldView.Right ||
+            point.y > worldView.Top || point.y < worldView.Bottom);
+    }
+
+    // Измененный метод: теперь удаляет только пули и взрывы, чтобы не засорять память. Врагов не трогает.
+    public void RemoveProjectiles(bool removeAll = false)
+    {
+        worldView = GameManager.Instance.worldViewCoords;
+
+        string[] tagsToClean = { "Explosion", "Bomb", "Bullet" };
+        foreach (var tag in tagsToClean)
+        {
+            GameObject[] objs = GameObject.FindGameObjectsWithTag(tag);
+            foreach (var o in objs) 
+            {
+                if (OutOfCameraView(o.transform.position) || removeAll) 
+                    Destroy(o);
+            }
+        }
+    }
+
+    // --- INSTANTIATION ДЛЯ БОССА ---
+
+    void InstantiateBombMan(string name, Vector3 position)
+    {
+        bombMan = Instantiate(prefabBombMan, position, Quaternion.identity);
+        bombMan.name = name;
+        var ec = bombMan.GetComponent<EnemyController>();
+        ec.SetBonusItemType(ItemScript.ItemTypes.Nothing);
+        ec.DefeatEvent.AddListener(this.BossDefeated);
+    }
+
+    void InstantiateWeaponPart(string name, Vector3 position, ItemScript.WeaponPartColors color)
+    {
+        GameObject wp = Instantiate(prefabWeaponPart, position, Quaternion.identity);
+        wp.name = name;
+        var script = wp.GetComponent<ItemScript>();
+        script.SetWeaponPartColor(color);
+        script.SetWeaponPartEnemy(ItemScript.WeaponPartEnemies.BombMan);
+        script.BonusItemEvent.AddListener(this.WeaponPartCollected);
+    }
+
+    // Обработка триггеров камеры и вход к боссу
+    public void PostTransitionEvent()
+    {
+        // (1st Transition) End of the first area
+        if (Between(playerPosition.x, TileWorldPos(93), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(6), halfTileY))
+        {
+            camTransitions[0].transform.position = new Vector3(camTransitions[0].transform.position.x, 0.986f);
+        }
+        // (1st Transition) Start of the second area
+        else if (Between(playerPosition.x, TileWorldPos(93), halfScreenWidth) &&
+            (Between(playerPosition.y, TileWorldPos(7), halfTileY) ||
+            Between(playerPosition.y, TileWorldPos(21), halfTileY)))
+        {
+            camTransitions[0].transform.position = new Vector3(camTransitions[0].transform.position.x, 0.696f);
+            camTransitions[1].transform.position = new Vector3(camTransitions[1].transform.position.x, 3.386f);
+        }
+        // (2nd Transition) Start of the third area
+        else if (Between(playerPosition.x, TileWorldPos(93), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(22), halfTileY))
+        {
+            camTransitions[1].transform.position = new Vector3(camTransitions[1].transform.position.x, 3.096f);
+        }
+        // (3rd Transition) End of the third area
+        else if (Between(playerPosition.x, TileWorldPos(173), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(36), halfTileY))
+        {
+            // Empty
+        }
+        // (3rd Transition) Start of the 4th area
+        else if (Between(playerPosition.x, TileWorldPos(173), halfScreenWidth) &&
+            (Between(playerPosition.y, TileWorldPos(37), halfTileY) ||
+            Between(playerPosition.y, TileWorldPos(51), halfTileY)))
+        {
+            camTransitions[2].transform.position = new Vector3(camTransitions[2].transform.position.x, 5.493f);
+            camTransitions[3].transform.position = new Vector3(camTransitions[3].transform.position.x, 8.201f);
+        }
+        // (4th Transition) Start of the 5th area
+        else if (Between(playerPosition.x, TileWorldPos(173), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(52), halfTileY))
+        {
+            camTransitions[3].transform.position = new Vector3(camTransitions[3].transform.position.x, 7.911f);
+        }
+        // (5th Transition) Door to start of Boss area / Top of the Ladder
+        else if (Between(playerPosition.x, TileWorldPos(253), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(52), halfTileY))
+        {
+            camTransitions[5].transform.position = new Vector3(camTransitions[5].transform.position.x, 7.88f);
+        }
+        // (6th Transition) Boss area 2
+        else if (Between(playerPosition.x, TileWorldPos(253), halfScreenWidth) &&
+            (Between(playerPosition.y, TileWorldPos(51), halfTileY) ||
+            Between(playerPosition.y, TileWorldPos(37), halfTileY)))
+        {
+            camTransitions[5].transform.position = new Vector3(camTransitions[5].transform.position.x, 8.17f);
+            camTransitions[6].transform.position = new Vector3(camTransitions[6].transform.position.x, 5.48f);
+        }
+        // (8th Transition) BombMan's Lair (ТРИГГЕР БОССА)
+        else if (Between(playerPosition.x, TileWorldPos(33), halfScreenWidth) &&
+         Between(playerPosition.y, TileWorldPos(22), tileSizeY * 2f))
+        {
+            startTime = Time.time;
+            levelState = LevelStates.BossFightIntro;
+        }
+    }
+
+    bool Between(float a, float b, float margin) => (a > (b - margin)) && (a < (b + margin));
+    float TileWorldPos(int tilePosition, float offset = 0.5f) => (float)tilePosition * 0.16f + offset * 0.16f;
+}
