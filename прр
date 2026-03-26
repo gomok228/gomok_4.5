@@ -75,7 +75,7 @@ public class BombManStage : MonoBehaviour
     public AudioClip victoryThemeClip;
 
     [Header("TileMap & Grid Objects")]
-    public Grid[] levelGrids; 
+    public Grid[] levelGrids;
     public Tilemap tmBackground;
     public Tilemap tmForeground;
 
@@ -94,8 +94,7 @@ public class BombManStage : MonoBehaviour
     public GameObject prefabWeaponPart;
 
     [Header("Enemy Objects")]
-    public GameObject prefabKamadoma;
-    public GameObject prefabBombombLauncher;
+  
     public GameObject prefabSniperJoe;
     public GameObject prefabKillerBomb;
     public GameObject prefabMambu;
@@ -106,38 +105,67 @@ public class BombManStage : MonoBehaviour
 
     void Awake()
     {
-        // Поиск UI компонентов. Убедись, что они есть на сцене с такими именами.
-        var runTimeObj = GameObject.Find("RunTime");
-        if (runTimeObj != null) runTimeText = runTimeObj.GetComponent<Text>();
         
-        var screenMsgObj = GameObject.Find("ScreenMessage");
-        if (screenMsgObj != null) screenMessageText = screenMsgObj.GetComponent<TextMeshProUGUI>();
-
         isSwappingTiles = false;
         isDoorwayMoving = false;
         isDoorway1Open = false;
-        isDoorway2Open = true; 
+        isDoorway2Open = true;
 
-        if (levelGrids != null && levelGrids.Length > 0 && levelGrids[0] != null)
+        // Базовая настройка сетки
+        if (levelGrids.Length > 0 && levelGrids[0] != null)
         {
             tileSizeX = levelGrids[0].cellSize.x;
             tileSizeY = levelGrids[0].cellSize.y;
         }
         else
         {
-            tileSizeX = 0.16f; 
+            tileSizeX = 0.16f;
             tileSizeY = 0.16f;
         }
 
         halfTileX = tileSizeX / 2f;
         halfTileY = tileSizeY / 2f;
+
         tileScreenSizeWidth = (float)tileScreenXY.x * tileSizeX;
         tileScreenSizeHeight = (float)tileScreenXY.y * tileSizeY;
+
         halfScreenWidth = tileScreenSizeWidth / 2f;
         halfScreenHeight = tileScreenSizeHeight / 2f;
 
-        // Инициализация словарей
-        InitObjectData();
+        // --- ОБНОВЛЕННЫЙ СПИСОК (С ДВУМЯ СНАЙПЕРАМИ) ---
+
+        // Статусы врагов и предметов
+        objectActive["KillerBomb"] = false;
+        objectActive["Mambu"] = false;
+        objectActive["SniperJoe1"] = false; // Первый снайпер
+        objectActive["SniperJoe2"] = false; // Второй снайпер
+
+        objectActive["ExtraLife1"] = false;
+        objectActive["LifeEnergyBig1"] = false;
+        objectActive["LifeEnergySmall1"] = false;
+        objectActive["LifeEnergySmall2"] = false;
+        objectActive["WeaponEnergyBig1"] = false;
+
+        // Координаты (твои точные значения + заготовки для снайперов)
+        objectPosition["KillerBomb"] = Vector3.zero;
+        objectPosition["Mambu"] = new Vector3(148.9f, 10.5f, 0f);
+
+        // Сюда потом впишешь координаты снайперов в Unity
+        objectPosition["SniperJoe1"] = Vector3.zero;
+        objectPosition["SniperJoe2"] = objectPosition["SniperJoe1"] = new Vector3(TileWorldPos(23, 0), 0.2f); ;
+
+        objectPosition["ExtraLife1"] = Vector3.zero;
+        objectPosition["LifeEnergyBig1"] = Vector3.zero;
+        objectPosition["LifeEnergySmall1"] = Vector3.zero;
+        objectPosition["LifeEnergySmall2"] = Vector3.zero;
+        objectPosition["WeaponEnergyBig1"] = Vector3.zero;
+
+        // Координаты Босса
+        Vector3 bossCoords = new Vector3(278.200012f,-4f,0f);
+        objectPosition["BombMan"] = bossCoords;
+        objectPosition["WeaponPart"] = bossCoords;
+
+        // --- КОНЕЦ ВСТАВКИ ---
     }
 
     void InitObjectData()
@@ -168,7 +196,7 @@ public class BombManStage : MonoBehaviour
         if (GameManager.Instance != null)
         {
             GameManager.Instance.SetResolutionScale(GameManager.ResolutionScales.Scale4x3);
-            GameManager.Instance.SetWeaponsMenuPalette(WeaponsMenu.MenuPalettes.BombMan);
+           
         }
 
         player = GameObject.FindGameObjectWithTag("Player");
@@ -190,8 +218,7 @@ public class BombManStage : MonoBehaviour
             case LevelStates.LevelPlay:
                 if (player != null) playerPosition = player.transform.position;
                 RemoveGameObjects();
-                SpawnKamadomas();
-                SpawnBombombLaunchers();
+               
                 SpawnSniperJoes();
                 SpawnKillerBombs();
                 SpawnMambus();
@@ -224,7 +251,7 @@ public class BombManStage : MonoBehaviour
 
                 if (UtilityFunctions.InTime(runTime, 3.0f)) ToggleDoorway2();
                 if (UtilityFunctions.InTime(runTime, 4.0f)) InstantiateBombMan("BombMan", objectPosition["BombMan"]);
-                
+
                 if (UtilityFunctions.InTime(runTime, 4.5f) && bombMan != null)
                 {
                     var bmc = bombMan.GetComponent<BombManController>();
@@ -290,7 +317,7 @@ public class BombManStage : MonoBehaviour
     private IEnumerator ToggleDoorwayGameObject(GameObject door, int doorID)
     {
         isDoorwayMoving = true;
-        yield return new WaitForSeconds(0.6f); 
+        yield return new WaitForSeconds(0.6f);
 
         if (doorID == 1)
         {
@@ -393,7 +420,7 @@ public class BombManStage : MonoBehaviour
         }
 
         // Чистка снарядов и взрывов
-        string[] tagsToClean = { "Explosion", "PlatformBeam", "Bomb", "Bullet" };
+        string[] tagsToClean = { "Explosion","Bomb", "Bullet" };
         foreach (var tag in tagsToClean)
         {
             GameObject[] objs = GameObject.FindGameObjectsWithTag(tag);
@@ -420,29 +447,8 @@ public class BombManStage : MonoBehaviour
 
     // --- INSTANTIATION METHODS ---
 
-    void InstantiateKamadoma(string name, Vector3 position)
-    {
-        GameObject kamadoma = Instantiate(prefabKamadoma, position, Quaternion.identity);
-        kamadoma.name = name;
-        var ec = kamadoma.GetComponent<EnemyController>();
-        ec.SetBonusBallColor(ItemScript.BonusBallColors.Blue);
-        ec.SetBonusItemType(ItemScript.ItemTypes.Random);
-        var kc = kamadoma.GetComponent<KamadomaController>();
-        kc.SetColor(KamadomaController.KamadomaColors.Red);
-        kc.EnableAI(true);
-        objectActive[name] = true;
-    }
 
-    void InstantiateBombombLauncher(string name, Vector3 position)
-    {
-        GameObject launcher = Instantiate(prefabBombombLauncher, position, Quaternion.identity);
-        launcher.name = name;
-        var bc = launcher.GetComponent<BombombController>();
-        bc.SetLaunchOnStart(true);
-        bc.SetLaunchDelay(3.5f);
-        bc.EnableAI(true);
-        objectActive[name] = true;
-    }
+   
 
     void InstantiateSniperJoe(string name, Vector3 position, Vector2 velocity)
     {
@@ -502,25 +508,7 @@ public class BombManStage : MonoBehaviour
 
     // --- SPAWN LOGIC ---
 
-    void SpawnKamadomas()
-    {
-        if ((Between(playerPosition.x, TileWorldPos(1), halfTileX) || Between(playerPosition.x, TileWorldPos(16), halfTileX)) &&
-            Between(playerPosition.y, TileWorldPos(0), halfScreenHeight) &&
-            GameObject.Find("Kamadoma1") == null && !objectActive["Kamadoma1"])
-        {
-            InstantiateKamadoma("Kamadoma1", objectPosition["Kamadoma1"]);
-        }
-        // Добавь здесь проверки для остальных Kamadoma
-    }
-
-    void SpawnBombombLaunchers()
-    {
-        if ((Between(playerPosition.x, TileWorldPos(35), halfTileX) || Between(playerPosition.x, TileWorldPos(50), halfTileX)) &&
-            GameObject.Find("BombombLauncher1") == null && !objectActive["BombombLauncher1"])
-        {
-            InstantiateBombombLauncher("BombombLauncher1", objectPosition["BombombLauncher1"]);
-        }
-    }
+    
 
     void SpawnSniperJoes()
     {
@@ -587,12 +575,91 @@ public class BombManStage : MonoBehaviour
 
     public void PostTransitionEvent()
     {
-        // Логика после перехода камеры
+        // the proper if/else will change their state
         canSpawnKillerBomb = false;
         canSpawnMambu = false;
+        midStartKillerBomb = false;
 
-        // Пример триггера боссфайта
-        if (Between(playerPosition.x, TileWorldPos(253), halfScreenWidth) && Between(playerPosition.y, TileWorldPos(22), tileSizeY * 2f))
+        // (1st Transition) End of the first area - ScrewDrivers and Bonus Items
+        if (Between(playerPosition.x, TileWorldPos(93), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(6), halfTileY))
+        {
+            // instantiate objects
+           
+            // reposition transition triggers
+            camTransitions[0].transform.position = new Vector3(camTransitions[0].transform.position.x, 0.986f);
+        }
+        // (1st Transition) Start of the second area - Blasters and Bonus Item
+        else if (Between(playerPosition.x, TileWorldPos(93), halfScreenWidth) &&
+            (Between(playerPosition.y, TileWorldPos(7), halfTileY) ||
+            Between(playerPosition.y, TileWorldPos(21), halfTileY)))
+        {
+            // instantiate objects
+
+            // reposition transition triggers
+            camTransitions[0].transform.position = new Vector3(camTransitions[0].transform.position.x, 0.696f);
+            camTransitions[1].transform.position = new Vector3(camTransitions[1].transform.position.x, 3.386f);
+        }
+        // (2nd Transition) Start of the third area - Sniper Joe
+        else if (Between(playerPosition.x, TileWorldPos(93), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(22), halfTileY))
+        {
+            // reposition transition triggers
+            camTransitions[1].transform.position = new Vector3(camTransitions[1].transform.position.x, 3.096f);
+        }
+        // (3rd Transition) End of the third area - Gabyoalls
+        else if (Between(playerPosition.x, TileWorldPos(173), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(36), halfTileY))
+        {
+            // instantiate objects
+
+
+        }
+        // (3rd Transition) Start of the 4th area - KillerBomb
+        else if (Between(playerPosition.x, TileWorldPos(173), halfScreenWidth) &&
+            (Between(playerPosition.y, TileWorldPos(37), halfTileY) ||
+            Between(playerPosition.y, TileWorldPos(51), halfTileY)))
+        {
+            // call the spawn killerbomb method
+            
+            // reposition transition triggers
+            camTransitions[2].transform.position = new Vector3(camTransitions[2].transform.position.x, 5.493f);
+            camTransitions[3].transform.position = new Vector3(camTransitions[3].transform.position.x, 8.201f);
+        }
+        // (4th Transition) Start of the 5th area - Mambu
+        else if (Between(playerPosition.x, TileWorldPos(173), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(52), halfTileY))
+        {
+            // we can spawn mambu
+            canSpawnMambu = true;
+            delayMambu = 0f;
+            // reposition transition triggers
+            camTransitions[3].transform.position = new Vector3(camTransitions[3].transform.position.x, 7.911f);
+        }
+        // (5th Transition) Door to start of Boss area
+        // (6th Transition) Boss area 1 - Top of the Ladder
+        else if (Between(playerPosition.x, TileWorldPos(253), halfScreenWidth) &&
+            Between(playerPosition.y, TileWorldPos(52), halfTileY))
+        {
+            // reposition transition triggers
+            camTransitions[5].transform.position = new Vector3(camTransitions[5].transform.position.x, 7.88f);
+        }
+        // (6th Transition) Boss area 2 - Adhering Suzy Group 1
+        else if (Between(playerPosition.x, TileWorldPos(253), halfScreenWidth) &&
+            (Between(playerPosition.y, TileWorldPos(51), halfTileY) ||
+            Between(playerPosition.y, TileWorldPos(37), halfTileY)))
+        {
+            // instantiate objects
+
+            // reposition transition triggers
+            camTransitions[5].transform.position = new Vector3(camTransitions[5].transform.position.x, 8.17f);
+            camTransitions[6].transform.position = new Vector3(camTransitions[6].transform.position.x, 5.48f);
+        }
+        // (7th Transition) Boss area 3 - Adhering Suzy Group 2
+
+        // (8th Transition) BombMan's Lair
+        else if (Between(playerPosition.x, TileWorldPos(33), halfScreenWidth) &&
+         Between(playerPosition.y, TileWorldPos(22), tileSizeY * 2f))
         {
             startTime = Time.time;
             levelState = LevelStates.BossFightIntro;
