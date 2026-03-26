@@ -1,20 +1,25 @@
+// Внутри класса BombManStage добавь этот метод:
+
 public void ClearLevelOnDeath()
 {
-    // 1. Останавливаем музыку
+    // Останавливаем музыку босса или уровня
     if (SoundManager.Instance != null) SoundManager.Instance.StopMusic();
 
-    // 2. Находим всех врагов на сцене и удаляем их
+    // Удаляем врагов, чтобы они не мешали сцене смерти
     GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
     foreach (var enemy in enemies)
     {
         Destroy(enemy);
     }
 
-    // 3. Чистим все снаряды (пули, бомбы, взрывы)
+    // Чистим ТОЛЬКО те пули и взрывы, которые уже есть на сцене
+    // Это не мешает игроку стрелять, пока он жив
     string[] tagsToClean = { "Explosion", "Bomb", "Bullet", "EnemyBullet" };
     foreach (var tag in tagsToClean)
     {
         GameObject[] objs = GameObject.FindGameObjectsWithTag(tag);
         foreach (var o in objs) Destroy(o);
     }
+    
+    Debug.Log("Уровень очищен после смерти игрока");
 }
