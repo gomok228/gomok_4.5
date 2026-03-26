@@ -1,0 +1,20 @@
+public void ClearLevelOnDeath()
+{
+    // 1. Останавливаем музыку
+    if (SoundManager.Instance != null) SoundManager.Instance.StopMusic();
+
+    // 2. Находим всех врагов на сцене и удаляем их
+    GameObject[] enemies = GameObject.FindGameObjectsWithTag("Enemy");
+    foreach (var enemy in enemies)
+    {
+        Destroy(enemy);
+    }
+
+    // 3. Чистим все снаряды (пули, бомбы, взрывы)
+    string[] tagsToClean = { "Explosion", "Bomb", "Bullet", "EnemyBullet" };
+    foreach (var tag in tagsToClean)
+    {
+        GameObject[] objs = GameObject.FindGameObjectsWithTag(tag);
+        foreach (var o in objs) Destroy(o);
+    }
+}
